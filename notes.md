@@ -231,4 +231,86 @@ $$ y = wx + b $$
     ```
     ![图 8](images/30ebe1af9b5b4084f5a60dfb4fc1b165e78c88f5df4139e4b40f625d4e163a55.png)  
     
+### 线性回归3.0：多元线性回归
+* 对于一个时间，如果有多个因素对其产生影响，我们就需要引入多元变量，这就是
+  多元线性回归存在的必要——即我们认为一个事件是由多个因素加权得到的结果，
+  这种加权是线性的，而非某种神经网络式的。
+* 数学表达：
+  $$ y = w_0x_0 + w_1x_1 + w_2x_2 + w_3x_3+……$$
+  用矩阵乘法表示即为：
+  ![图 9](images/cc8cd3ee77f19cff4217bacf6ea108cdf1ee9f90dd855da9638cf77e8910f9ab.png)  
+  可以发现解析解自始至终没有变化
+* 代码实现
+  * 改进点1：基本数据处理
+  ```python
+  import numpy as np
+  x1 = np.array(flipper_length)
+  x2 = np.array(bill_length)
+  x3 = np.array(bill_depth)
+  y = np.array(body_mass)
 
+  idx = (x2 != None) & (x3 != None) & (x1 != None) & (y != None)
+  x1 = x1[idx]
+  x2 = x2[idx]
+  x3 = x3[idx]
+  y = y[idx]
+  bias = np.ones(x1.shape)
+  x = np.stack((bias, x1, x2, x3), axis = 1)
+  ``` 
+  * 除此之外的代码几乎没有变化
+  * 改进点二：数据预处理——Zscore法和Min-Max法
+  我们用多元线性回归得到的系数表达式
+  ![图 10](images/36cf115a204fc52d7a46bcf1dbd9b691f7923d5bf06795a73fc047107f870abb.png)  
+  但我们能因此就说：$x_3$是最重要的 $x_2$没有$x_1$重要吗？
+  我们来看X的数据
+  ```python
+  [[  1.   39.1  18.7 181. ]
+  [  1.   37.8  18.3 174. ]
+  [  1.   36.5  18.  182. ]
+  [  1.   35.7  16.9 185. ]]
+  ```
+  其实$x_2$单纯从数据量上将就比$x_1$要大，那么你就不能直接以系数来做比较，一个数据是10000的东西，哪怕他的系数只有0.0几，也不影响这个东西起了决定性作用。所以我们需要把这些数据做*归一化*的处理。
+  归一化一般来说有两种思路
+    * Min-max法
+  $$ X = \frac{X - Xmin}{Xmax - Xmin} $$
+    * Z-score法
+  $$ X = \frac{X - \mu}{\sigma} $$
+    其中$\mu$为均值，$\sigma$为标准差
+
+    * 两种归一化方法的比较：
+        1. Min-max法：
+            - 将数据线性映射到[0,1]区间
+            - 对异常值敏感，容易受极端值影响
+            - 适用于数据分布未知或数据范围明确的情况
+        2. Z-score法：
+            - 将数据转换为均值为0，标准差为1的标准正态分布
+            - 对异常值不敏感，适合处理有离群点的数据
+            - 适用于数据服从或近似服从正态分布的情况
+    * 使用场景：
+        - 当数据分布未知或需要保留原始数据比例关系时，使用Min-max法
+        - 当数据存在离群点或需要标准化处理时，使用Z-score法
+        - 在机器学习中，Z-score法常用于特征缩放，而Min-max法常用于图像处理
+  * 代码实现
+  ```python
+  x1 = (x1 - np.min(x1)) / (np.max(x1) - np.min(x1)) + np.finfo(float).eps
+  x2 = (x2 - np.min(x2)) / (np.max(x2) - np.min(x2)) + np.finfo(float).eps
+  x3 = (x3 - np.min(x3)) / (np.max(x3) - np.min(x3)) + np.finfo(float).eps 
+  ```
+  请注意 这里需要加一个np.finfo(float).eps的极小量，预防出现0/0的情况报错
+  ```python
+  # 计算每个特征的均值和标准差
+  x1_mean = np.mean(x1)
+  x1_std = np.std(x1)
+  x2_mean = np.mean(x2)
+  x2_std = np.std(x2)
+  x3_mean = np.mean(x3)
+  x3_std = np.std(x3)
+  x1 = (x1 - x1_mean) / x1_std + np.finfo(float).eps
+  x2 = (x2 - x2_mean) / x2_std + np.finfo(float).eps
+  x3 = (x3 - x3_mean) / x3_std + np.finfo(float).eps
+  ```
+  这里记住两个方法：np.mean(), np.std()
+  这样处理后的系数就可以代表特征的重要性程度了
+  ```python
+  [2836.65586543  163.121665   -266.14753242 2100.14533999]
+  ```
