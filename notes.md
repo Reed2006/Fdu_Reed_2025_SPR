@@ -314,3 +314,140 @@ $$ y = wx + b $$
   ```python
   [2836.65586543  163.121665   -266.14753242 2100.14533999]
   ```
+### 一个改进：关于交叉验证
+* 我们现在只有一个测试集和一个训练集
+  但是问题在于 这个测试集归根结底只是无数数据中的一批，我们怎么样才能在数据量有限的情况下尽可能泛化呢？
+  ![图 11](images/5059268a363b8f2eb66ec48705be5adcd2f93e63fd4f929ced33059ec754b09c.png)  
+  我们把$fold_1$作为第一次训练的测试集，剩下四个集作为训练集，得到第一个Accuracy——以此类推，可以得到五个Accuracy.
+  通过这样的方式，我们使这个模型更为可靠。
+  事实上，我们还可以重复做交叉验证。
+  *E.G.*
+  我们有三百个样本作为样本集，我们可以先做一次五折交叉验证，然后得到Final_Accuracy，然后可以把这三百个样本打混，然后又得到n组这样的交叉验证。
+* 代码实现
+  * 如何划分样本集：
+  ```python
+  idx = np.random.permutation(y.size)
+  ##生成一个随机打乱的 0-y.size-1的序列
+  mses = []
+  for split_idx in range(num_split):
+    # make split indice
+    tst_idx = set(idx[split_idx::num_split])
+    #也就是说 对于上面那个idx中，从idx的第0个开始，
+    #每隔num_split记一个，这样就得到了fold1作为测试
+    #集元素的index。也就是说得到了一个set，里面
+    #装满了目标元素的idx。
+    trn_idx = set(idx) - tst_idx
+    trn_idx = np.array(list(trn_idx)).astype(int)
+    #np生成的数是float
+    tst_idx = np.array(list(tst_idx)).astype(int)
+    # split data
+    X_trn = X[trn_idx]
+    #可以直接用np的array作为索引访问X这个更大的nparray
+    #顺序访问idx的每个元素，再用这些元素访问X
+    y_trn = y[trn_idx]
+    X_tst = X[tst_idx]
+    y_tst = y[tst_idx]
+
+    X_min = np.min(X_trn, axis=0)
+    X_max = np.max(X_trn, axis=0)
+
+    X_trn = (X_trn - X_min)/(X_max - X_min + np.finfo(float).eps)
+    x0_trn =  np.ones((X_trn.shape[0], 1))
+    X_trn = np.concatenate((x0_trn, X_trn), axis=1)
+
+    result = np.matmul(X_trn.transpose(), X_trn)
+    result = np.linalg.inv(result)
+    result = np.matmul(result, X_trn.transpose())
+    result = np.matmul(result, y_trn)
+    w = result
+
+    # test
+    
+    X_tst = (X_tst - X_min)/(X_max - X_min + np.finfo(float).eps)
+    x0_tst =  np.ones((X_tst.shape[0], 1))
+    X_tst = np.concatenate((x0_tst, X_tst), axis=1)
+    y_tst_pred = np.matmul(X_tst, w)
+    
+    diff = y_tst - y_tst_pred
+    mse = np.mean(diff ** 2)
+    mses.append(mse)
+    ```
+  * 但其实我们发现这么干好像不是很公平，因为你不同的模型生成的随机数——从而生成随机序列——从而选取元素每次都不同
+  * 我们希望他们训练的量变大，但基于控制变量的原则，不要两个模型搞出来的比较元素不一样，也就是说，你每次训练的数据应该是同一批。
+  ```python
+  rng = np.random.default_rng(seed=0)
+  #这个seed = 0保证每次生成的随机数序列一致。
+  idx = rng.permutation(y.size)
+  #相当于你接受了一个指令rng，这个rng.permutation
+  #保证调取同一批序列
+  ```
+### 再改进：梯度下降算法
+* 我们看到现在的线性回归模型是解析解的，但是大部分的模型最后恐怕都没有解析解，而且数据维度过高不是什么好事。
+* 数学原理：
+  在微积分中：
+  梯度方向是函数变化的最快方向
+  而由于损失函数是下凸的，所以每次往梯度方向减一点，得到新的位置，再往梯度方向减一点……
+  直到变化小于某个值（底部应该为0）
+  ![图 12](images/35f8cd8e3df6931f35a28628168aee2372e999892129646171bd46920b0b677c.png)  
+  * 这个每次下降一点点的系数就是学习率
+  如果你的学习率太**高**，你很有可能会导致第一次下降下降过了头，然后这之后因为你的梯度越来越大，映射到了无穷。
+  ![图 13](images/278ee293f8e6e86f2e94bc0a5cfe3b44df521bfc6db31aa515c64d5734a2809d.png)  
+  如果有点高，则有可能你会错过实际最小值，再一个局部最小值就停手了。
+  ![图 14](images/b390b0d6566d9ff2923cd927f773e85ca785e2a57324f983f51c11a2c890b271.png)  
+  太小了，耗费时间、算力太久。
+  一图以蔽之：
+  ![图 15](images/7424158fdb9826545afea9b60cb22175aca19c38336961700e51c534b1e512a8.png)  
+  所以你评估的是损失函数，你调整的参数是学习率，目的是为了得到模型最优参数w。
+* 代码实现
+  ```python
+  def calculate_cost(X, y, w):
+    d = y - np.matmul(X, w)
+    cost = np.mean(d * d)
+    return cost
+  def calculate_grad(X, y, w):
+    grad = np.matmul(np.matmul(X.transpose(), X), w)
+    grad = grad - np.matmul(X.transpose(), y)
+    grad = grad * 2 / X.shape[0]
+    return grad
+  ```
+  这里是实现了前馈和梯度计算
+  ```python
+  mu, sigma = 0., 1.
+  w_t = np.random.normal(mu, sigma, size=4).reshape((4, 1))
+  print(w_t)
+  ```
+  高斯分布生成第一个w用于第一次下降。
+  ```python
+  Js = []
+
+  alpha = 0.1##learning_rate
+  for t in range(5000):#学习上限
+    g_t = calculate_grad(X, y, w_t)
+    w_t -= alpha * g_t
+
+    J_t = calculate_cost(X, y, w_t)
+    Js.append(J_t)
+
+  print(w_t)
+  ```
+
+
+* 但是，实际操作中我们发现X的样本太多时候向量乘积是不可能的，所以如果我们只取一个点，那么就形成了**SGD**
+  ![图 0](images/e9af6dd2468b29dd8f9b7106b822ec472b6bd99c7faac1191c08e13d437804a6.png)  
+也就是说损失函数只按一个样本下降，不考虑全部的loss函数。
+但很快发现这样很有可能被某一两个噪声值影响过大，从而导致拟合精度不高、整体上的损失过大。
+所以我们考虑折中，引入一个batch来做小规模样本的梯度下降
+![图 1](images/e0525bd5a8617a2864b4f064511b6fb665fdee17a405e719ac02c89485976f03.png)  
+* 代码实现
+  ```python
+  batch_size=10
+
+  for alpha in (0.1, 0.01):
+    for epoch in range(500):
+        idx = np.random.permutation(X.shape[0])
+        for row_idx in idx[::batch_size]:
+            x_t = X[row_idx:row_idx+batch_size]
+            y_t = y[row_idx:row_idx+batch_size]
+  ```
+  也即 每次只下降一小部分 但是最后总归是下降完了所有的可能性。
+  
